@@ -28,7 +28,7 @@ import inspect
 import logging
 import os
 import re
-from collections.abc import ItemsView, Iterator, Mapping, Sequence
+from collections.abc import ItemsView, Iterable, Iterator, Mapping, Sequence
 from dataclasses import _MISSING_TYPE, dataclass, field
 from functools import cache, lru_cache
 from pathlib import Path
@@ -292,7 +292,7 @@ class HandleChildren:
     rules: RulesCollection = field(init=True, repr=False)
     app: App
 
-    def include_children(
+    def include_children(  # pylint: disable=too-many-return-statements
         self,
         basedir: str,
         k: str,
@@ -300,6 +300,13 @@ class HandleChildren:
         parent_type: FileType,
     ) -> list[Lintable]:
         """Include children."""
+        # import_playbook only accepts a string as argument (no dict syntax)
+        if k in (
+            "import_playbook",
+            "ansible.builtin.import_playbook",
+        ) and not isinstance(v, str):
+            return []
+
         # handle special case include_tasks: name=filename.yml
         if k in INCLUSION_ACTION_NAMES and isinstance(v, dict) and "file" in v:
             v = v["file"]
@@ -322,12 +329,19 @@ class HandleChildren:
         # pylint: disable=unused-variable
         (command, args, kwargs) = tokenize(f"{k}: {v}")
 
-        result = path_dwim(basedir, args[0])
+        if args:
+            file = args[0]
+        elif "file" in kwargs:
+            file = kwargs["file"]
+        else:
+            return []
+
+        result = path_dwim(basedir, file)
         while basedir not in ["", "/"]:
             if os.path.exists(result):
                 break
             basedir = os.path.dirname(basedir)
-            result = path_dwim(basedir, args[0])
+            result = path_dwim(basedir, file)
 
         return [Lintable(result, kind=parent_type)]
 
@@ -435,7 +449,7 @@ class HandleChildren:
         """Roles children."""
         # pylint: disable=unused-argument # parent_type)
         results: list[Lintable] = []
-        if not v:
+        if not v or not isinstance(v, Iterable):
             # typing does not prevent junk from being passed in
             return results
         for role in v:
